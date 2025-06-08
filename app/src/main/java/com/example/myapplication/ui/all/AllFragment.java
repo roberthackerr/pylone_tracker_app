@@ -283,7 +283,7 @@ public class AllFragment extends Fragment {
         requireActivity().runOnUiThread(() -> textView.setText(cellInfoString));
 
         if (webSocketService.getIsStreaming().getValue() != null && webSocketService.getIsStreaming().getValue()) {
-            webSocketService.sendCellData(jsonData.toString());
+            webSocketService.sendNeighboringCellData(jsonData.toString());
         }
     }
 

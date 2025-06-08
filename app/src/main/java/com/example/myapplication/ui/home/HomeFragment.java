@@ -297,7 +297,7 @@ public class HomeFragment extends Fragment {
         requireActivity().runOnUiThread(() -> cellInfoText.setText(cellInfoString));
 
         if (webSocketService.getIsStreaming().getValue() != null && webSocketService.getIsStreaming().getValue()) {
-            webSocketService.sendCellData(jsonData.toString());
+            webSocketService.sendPrimaryCellData(jsonData.toString());
         }
     }
 

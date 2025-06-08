@@ -1,6 +1,5 @@
 package com.example.myapplication.services;
 
-import android.graphics.BitmapFactory;
 import android.util.Base64;
 import android.util.Log;
 import androidx.camera.core.ImageProxy;
@@ -18,12 +17,16 @@ import android.graphics.Bitmap;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
+import android.graphics.BitmapFactory;
 
 public class WebSocketService {
     private static WebSocketService instance;
     private final OkHttpClient client;
-    private WebSocket webSocket;
-    private String serverUrl;
+    private WebSocket data1WebSocket; // For /ws/data1 (primary_cell)
+    private WebSocket data2WebSocket; // For /ws/data2 (neighboring_cells)
+    private WebSocket imageWebSocket; // For /ws/image (camera frames)
+    private String serverAddress;
+    private String port;
     private final MutableLiveData<Boolean> isStreaming = new MutableLiveData<>(false);
     private final MutableLiveData<String> connectionStatus = new MutableLiveData<>("Disconnected");
     private final MutableLiveData<String> errorMessage = new MutableLiveData<>();
@@ -64,68 +67,100 @@ public class WebSocketService {
             return;
         }
 
-        serverUrl = "ws://" + serverAddress.trim() + ":" + port.trim() + "/ws";
-        Request request = new Request.Builder().url(serverUrl).build();
+        this.serverAddress = serverAddress.trim();
+        this.port = port.trim();
 
-        webSocket = client.newWebSocket(request, new WebSocketListener() {
+        // Connect to all three endpoints
+        connectToEndpoint("data1", "/ws/data1");
+        connectToEndpoint("data2", "/ws/data2");
+        connectToEndpoint("image", "/ws/image");
+    }
+
+    private void connectToEndpoint(String endpointType, String path) {
+        String url = "ws://" + serverAddress + ":" + port + path;
+        Request request = new Request.Builder().url(url).build();
+
+        WebSocketListener listener = new WebSocketListener() {
             @Override
             public void onOpen(WebSocket ws, Response response) {
+                synchronized (this) {
+                    if (endpointType.equals("data1")) data1WebSocket = ws;
+                    else if (endpointType.equals("data2")) data2WebSocket = ws;
+                    else if (endpointType.equals("image")) imageWebSocket = ws;
+                }
                 isStreaming.postValue(true);
-                connectionStatus.postValue("Connected");
-                Log.d("WebSocketService", "Connected to " + serverUrl);
+                connectionStatus.postValue("Connected to " + path);
+                Log.d("WebSocketService", "Connected to " + url);
             }
 
             @Override
             public void onFailure(WebSocket ws, Throwable t, Response response) {
                 isStreaming.postValue(false);
-                connectionStatus.postValue("Disconnected");
-                errorMessage.postValue("Connection failed: " + t.getMessage());
-                Log.e("WebSocketService", "Connection failed: " + t.getMessage());
+                connectionStatus.postValue("Disconnected from " + path);
+                errorMessage.postValue("Connection failed for " + path + ": " + t.getMessage());
+                Log.e("WebSocketService", "Connection failed for " + url + ": " + t.getMessage());
             }
 
             @Override
             public void onClosed(WebSocket ws, int code, String reason) {
                 isStreaming.postValue(false);
-                connectionStatus.postValue("Disconnected");
-                Log.d("WebSocketService", "Disconnected: " + reason);
+                connectionStatus.postValue("Disconnected from " + path);
+                Log.d("WebSocketService", "Disconnected from " + url + ": " + reason);
             }
 
             @Override
             public void onMessage(WebSocket ws, String text) {
-                Log.d("WebSocketService", "Received: " + text);
+                Log.d("WebSocketService", "Received from " + path + ": " + text);
             }
-        });
+        };
+
+        client.newWebSocket(request, listener);
     }
 
     public void disconnect() {
-        if (webSocket != null) {
-            webSocket.close(1000, "User disconnected");
-            webSocket = null;
+        if (data1WebSocket != null) {
+            data1WebSocket.close(1000, "User disconnected");
+            data1WebSocket = null;
+        }
+        if (data2WebSocket != null) {
+            data2WebSocket.close(1000, "User disconnected");
+            data2WebSocket = null;
+        }
+        if (imageWebSocket != null) {
+            imageWebSocket.close(1000, "User disconnected");
+            imageWebSocket = null;
         }
         isStreaming.postValue(false);
         connectionStatus.postValue("Disconnected");
     }
 
-    public void sendCellData(String jsonData) {
-        if (Boolean.TRUE.equals(isStreaming.getValue()) && webSocket != null) {
-            webSocket.send(jsonData);
-            Log.d("WebSocketService", "Sent cell data: " + jsonData.substring(0, Math.min(jsonData.length(), 50)) + "...");
+    public void sendPrimaryCellData(String jsonData) {
+        if (Boolean.TRUE.equals(isStreaming.getValue()) && data1WebSocket != null) {
+            data1WebSocket.send(jsonData);
+            Log.d("WebSocketService", "Sent primary cell data: " + jsonData.substring(0, Math.min(jsonData.length(), 50)) + "...");
+        }
+    }
+
+    public void sendNeighboringCellData(String jsonData) {
+        if (Boolean.TRUE.equals(isStreaming.getValue()) && data2WebSocket != null) {
+            data2WebSocket.send(jsonData);
+            Log.d("WebSocketService", "Sent neighboring cell data: " + jsonData.substring(0, Math.min(jsonData.length(), 50)) + "...");
         }
     }
 
     public void sendCameraFrame(ImageProxy imageProxy) {
-        if (!Boolean.TRUE.equals(isStreaming.getValue()) || webSocket == null) {
+        if (!Boolean.TRUE.equals(isStreaming.getValue()) || imageWebSocket == null) {
             return;
         }
 
         try {
             Bitmap bitmap = imageProxyToBitmap(imageProxy);
             String base64 = bitmapToBase64(bitmap);
-            webSocket.send("data:image/jpeg;base64," + base64);
-            Log.d("WebSocketService", "Sent camera frame");
+            imageWebSocket.send("data:image/jpeg;base64," + base64);
+            Log.d("WebSocketService", "Sent camera frame to /ws/image");
         } catch (Exception e) {
-            errorMessage.postValue("Frame error: " + e.getMessage());
-            Log.e("WebSocketService", "Frame error: " + e.getMessage());
+            errorMessage.postValue("Image error: " + e.getMessage());
+            Log.e("WebSocketService", "Image error: " + e.getMessage());
         }
     }
 
